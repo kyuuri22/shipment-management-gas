@@ -9,7 +9,7 @@ function onEditHandler(e) {
     const FLAG_HEADER = "転記済み";
     const SHIP_DATE_HEADER = "出荷日";
 
-    const DST_ID = "1oOhR4rDG396X59jNJWqLUHA8L0lXUluVek4YkqhYgMc"; //出荷管理ファイルID
+    const DST_ID = "出荷管理ファイルID"; //出荷管理ファイルID
     const TEMPLATE_SHEET_NAME = "原紙";
 
     const DST_HEADER_ROW = 2;
