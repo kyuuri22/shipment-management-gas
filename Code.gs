@@ -201,7 +201,7 @@ function sortSheetsByDate() {
 // ================================
 function protectPastSheets() {
 
-  const DST_ID = "1oOhR4rDG396X59jNJWqLUHA8L0lXUluVek4YkqhYgMc";
+  const DST_ID = "出荷管理ファイルID"; //出荷管理ファイルID
   const ss = SpreadsheetApp.openById(DST_ID);
 
   const permissionSheet = ss.getSheetByName("権限管理");
