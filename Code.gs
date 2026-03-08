@@ -1,49 +1,65 @@
+// 🆕 追加：初回のみ実行してIDを保存、実行後は削除推奨
+function setConfig() {
+  PropertiesService.getScriptProperties().setProperties({
+    "DST_ID": "ここに実際のスプレッドシートID"
+  });
+  console.log("設定完了");
+}
+
+
 function onEditHandler(e) {
 
+  const SRC_SHEET_NAME = "入力用";
+  const FLAG_HEADER = "転記済み";
+  const SHIP_DATE_HEADER = "出荷日";
+
+  // ✅ 変更：直書き → PropertiesServiceから取得
+  const DST_ID = PropertiesService.getScriptProperties().getProperty("DST_ID");
+  if (!DST_ID) {
+    console.error("DST_IDが設定されていません。setConfig()を実行してください。");
+    return;
+  }
+
+  const TEMPLATE_SHEET_NAME = "原紙";
+
+  const DST_HEADER_ROW = 2;
+  const DST_START_ROW = 3;
+
+  if (!e) return;
+
+  const sheet = e.range.getSheet();
+  if (sheet.getName() !== SRC_SHEET_NAME) return;
+
+  const row = e.range.getRow();
+  const col = e.range.getColumn();
+  if (row === 1) return;
+
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getValues()[0];
+
+  const flagCol = headers.indexOf(FLAG_HEADER) + 1;
+  const shipDateCol = headers.indexOf(SHIP_DATE_HEADER) + 1;
+
+  if (flagCol === 0 || shipDateCol === 0) return;
+  if (col !== flagCol) return;
+
+  const rowData = sheet
+    .getRange(row, 1, 1, headers.length)
+    .getValues()[0];
+
+  const shipDate = rowData[shipDateCol - 1];
+  if (!(shipDate instanceof Date)) return;
 
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000); // 最大30秒待機
+  lock.waitLock(30000);
 
-  try{
-    const SRC_SHEET_NAME = "入力用";
-    const FLAG_HEADER = "転記済み";
-    const SHIP_DATE_HEADER = "出荷日";
-
-    const DST_ID = "出荷管理ファイルID"; //出荷管理ファイルID
-    const TEMPLATE_SHEET_NAME = "原紙";
-
-    const DST_HEADER_ROW = 2;
-    const DST_START_ROW = 3;
-
-    if (!e) return;
-
-    const sheet = e.range.getSheet();
-    if (sheet.getName() !== SRC_SHEET_NAME) return;
-
-    const row = e.range.getRow();
-    const col = e.range.getColumn();
-    if (row === 1) return;
-
-    const headers = sheet
-      .getRange(1, 1, 1, sheet.getLastColumn())
-      .getValues()[0];
-
-    const flagCol = headers.indexOf(FLAG_HEADER) + 1;
-    const shipDateCol = headers.indexOf(SHIP_DATE_HEADER) + 1;
-
-    if (flagCol === 0 || shipDateCol === 0) return;
-    if (col !== flagCol) return;
-
-    const rowData = sheet
-      .getRange(row, 1, 1, headers.length)
-      .getValues()[0];
-
-    const shipDate = rowData[shipDateCol - 1];
-    if (!(shipDate instanceof Date)) return;
+  try {
 
     const dstSS = SpreadsheetApp.openById(DST_ID);
-    const sheetName = Utilities.formatDate(shipDate, "Asia/Tokyo", "yyyy-MM-dd");
+    const sheetName = Utilities.formatDate(shipDate, "Asia/Tokyo", "yy/MM/dd");
     let dstSheet = dstSS.getSheetByName(sheetName);
+    let sheetCreated = false;
 
     /* ===============================
       チェックOFF → 削除処理
@@ -64,17 +80,14 @@ function onEditHandler(e) {
 
       if (index !== -1) {
         const deleteRowNumber = DST_START_ROW + index;
-
+        const currentLastColumn = dstSheet.getLastColumn();
         dstSheet
-          .getRange(deleteRowNumber, 1, 1, dstSheet.getLastColumn())
-          .clearContent();  // ← deleteRowではなくこれ
+          .getRange(deleteRowNumber, 1, 1, currentLastColumn)
+          .clearContent();
       }
-
-      sortSheetsByDate();
 
       return;
     }
-    
 
     /* ===============================
       チェックON → 転記処理
@@ -82,15 +95,16 @@ function onEditHandler(e) {
 
     if (!dstSheet) {
       const template = dstSS.getSheetByName(TEMPLATE_SHEET_NAME);
+      if (!template) {
+        console.error(`テンプレートシート "${TEMPLATE_SHEET_NAME}" が見つかりません`);
+        return;
+      }
 
-      // 念のため再確認
+      const newSheet = template.copyTo(dstSS);
+      newSheet.setName(sheetName);
       dstSheet = dstSS.getSheetByName(sheetName);
 
-      if (!dstSheet) {
-        const newSheet = template.copyTo(dstSS);
-        newSheet.setName(sheetName);
-        dstSheet = dstSS.getSheetByName(sheetName);
-      }
+      sheetCreated = true;
     }
 
     if (!(shipDate instanceof Date)) return;
@@ -98,39 +112,39 @@ function onEditHandler(e) {
     // すでに同じ元行があるか確認（A列）
     if (dstSheet) {
       const lastRowCheck = dstSheet.getLastRow();
+
       if (lastRowCheck >= DST_START_ROW) {
         const existingRows = dstSheet
           .getRange(DST_START_ROW, 1, lastRowCheck - DST_START_ROW + 1, 1)
           .getValues()
           .flat();
 
-        if (existingRows.includes(row)) {
-          return; // すでに転記済みなら終了
-        }
+        if (existingRows.includes(row)) return;
       }
     }
 
     let startRow = DST_START_ROW;
 
-    const maxRows = dstSheet.getMaxRows();
+    const lastRow = dstSheet.getLastRow();
+    const lastColumn = dstSheet.getLastColumn();
 
-    // B〜M列（2〜13列目）をまとめて取得
-    const dataRange = dstSheet.getRange(
-      DST_START_ROW,
-      2,
-      maxRows - DST_START_ROW + 1,
-      12
-    ).getValues();
+    const dataRows = Math.max(lastRow - DST_START_ROW + 1, 0);
+    const checkRows = Math.min(50, dataRows);
+    const startCheckRow = checkRows > 0 ? lastRow - checkRows + 1 : DST_START_ROW;
 
-    // 下から探す
+    const dataRange = checkRows > 0
+      ? dstSheet.getRange(startCheckRow, 2, checkRows, lastColumn - 1).getValues()
+      : [];
+
     for (let i = dataRange.length - 1; i >= 0; i--) {
 
-      const rowHasData = dataRange[i].some(
-        cell => cell !== "" && cell !== null
-      );
+      const rowHasData = dataRange[i].some((cell, index) => {
+        if (index >= 13 && index <= 15) return false;
+        return cell !== "" && cell !== null;
+      });
 
       if (rowHasData) {
-        startRow = DST_START_ROW + i + 1;
+        startRow = startCheckRow + i + 1;
         break;
       }
     }
@@ -144,23 +158,22 @@ function onEditHandler(e) {
       return index !== -1 ? rowData[index] : "";
     });
 
-    /* ★ A列に元行番号を書き込む */
     writeRow[0] = row;
 
     dstSheet
       .getRange(startRow, 1, 1, writeRow.length)
       .setValues([writeRow]);
 
-    dstSheet.getRange("C1").setValue(shipDate);
+    if (!dstSheet.getRange("D1").getValue()) {
+      dstSheet.getRange("D1").setValue(
+        Utilities.formatDate(shipDate, "Asia/Tokyo", "yy/MM/dd")
+      );
+    }
 
-    const formattedDate = Utilities.formatDate(shipDate, "Asia/Tokyo", "yyyy-MM-dd");
+    if (sheetCreated) {
+      sortSheetsByDate();
+    }
 
-  // D1が空のときだけ入力
-  if (!dstSheet.getRange("D1").getValue()) {
-    dstSheet.getRange("D1").setValue(formattedDate);
-  }
-
-    sortSheetsByDate();
   } finally {
     lock.releaseLock();
   }
@@ -172,27 +185,37 @@ function onEditHandler(e) {
 // =================================
 function sortSheetsByDate() {
 
-  const DST_ID = "出荷管理ファイルID";  // ＜出荷管理ファイルID＞
-  const ss = SpreadsheetApp.openById(DST_ID);
+  // ✅ 変更：直書き → PropertiesServiceから取得
+  const DST_ID = PropertiesService.getScriptProperties().getProperty("DST_ID");
+  if (!DST_ID) {
+    console.error("DST_IDが設定されていません。setConfig()を実行してください。");
+    return;
+  }
 
+  const ss = SpreadsheetApp.openById(DST_ID);
   const sheets = ss.getSheets();
 
   const dateSheets = sheets
-    .filter(s => /^\d{4}-\d{2}-\d{2}$/.test(s.getName()))
-    .map(s => ({
-      sheet: s,
-      date: new Date(s.getName())
-    }));
+    .filter(s => /^\d{2}\/\d{1,2}\/\d{1,2}$/.test(s.getName()))
+    .map(s => {
 
-  // 古い → 新しい（右が最新）
+      const parts = s.getName().split("/");
+      const year = 2000 + Number(parts[0]);
+      const month = Number(parts[1]) - 1;
+      const day = Number(parts[2]);
+
+      return {
+        sheet: s,
+        date: new Date(year, month, day)
+      };
+    });
+
   dateSheets.sort((a, b) => a.date - b.date);
 
-  // 左から順に並べる
   dateSheets.forEach((obj, index) => {
     ss.setActiveSheet(obj.sheet);
     ss.moveActiveSheet(index + 1);
   });
-
 }
 
 
@@ -201,68 +224,91 @@ function sortSheetsByDate() {
 // ================================
 function protectPastSheets() {
 
-  const DST_ID = "出荷管理ファイルID"; //出荷管理ファイルID
-  const ss = SpreadsheetApp.openById(DST_ID);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
 
-  const permissionSheet = ss.getSheetByName("権限管理");
-  const permissionData = permissionSheet
-    .getRange(2, 1, permissionSheet.getLastRow() - 1, 2)
-    .getValues();
+  try {
 
-  const admins = [];
-  const staff = [];
-
-  permissionData.forEach(row => {
-    const email = row[0];
-    const role = row[1];
-    if (!email) return;
-
-    if (role === "管理者") admins.push(email);
-    if (role === "担当者") staff.push(email);
-  });
-
-  const sheets = ss.getSheets();
-  const today = new Date();
-  today.setHours(0,0,0,0);
-
-  sheets.forEach(sheet => {
-
-    const name = sheet.getName();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(name)) return;
-
-    const sheetDate = new Date(name);
-    sheetDate.setHours(0,0,0,0);
-    if (sheetDate > today) return;
-
-    // 既存保護削除
-    sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET)
-         .forEach(p => p.remove());
-
-    const protection = sheet.protect();
-    protection.setWarningOnly(false);
-
-    // まず全員削除
-    protection.removeEditors(protection.getEditors());
-
-    // 管理者はフル編集可
-    protection.addEditors(admins);
-
-    // ドメイン編集禁止
-    if (protection.canDomainEdit()) {
-      protection.setDomainEdit(false);
+    // ✅ 変更：直書き → PropertiesServiceから取得
+    const DST_ID = PropertiesService.getScriptProperties().getProperty("DST_ID");
+    if (!DST_ID) {
+      console.error("DST_IDが設定されていません。setConfig()を実行してください。");
+      return;
     }
 
-    // 担当者は特定列のみ編集可
-    const editableRangesForStaff = [
-      sheet.getRange("J:J"),
-      sheet.getRange("K:K"),
-      sheet.getRange("O:R")
-    ];
+    const ss = SpreadsheetApp.openById(DST_ID);
 
-    protection.setUnprotectedRanges(editableRangesForStaff);
+    const permissionSheet = ss.getSheetByName("権限管理");
+    const lastRow = permissionSheet.getLastRow();
+    if (lastRow < 2) return;
 
-    // 担当者も編集者として追加
-    protection.addEditors(staff);
+    const permissionData = permissionSheet
+      .getRange(2, 1, lastRow - 1, 2)
+      .getValues();
 
-  });
+    const admins = [];
+    const staff = [];
+
+    permissionData.forEach(row => {
+      const email = row[0];
+      const role = row[1];
+      if (!email) return;
+
+      if (role === "管理者") admins.push(email);
+      if (role === "担当者") staff.push(email);
+    });
+
+    const sheets = ss.getSheets();
+    const today = new Date();
+    today.setHours(0,0,0,0);
+
+    sheets.forEach(sheet => {
+
+      const name = sheet.getName();
+      if (!/^\d{2}\/\d{1,2}\/\d{1,2}$/.test(name)) return;
+
+      const parts = name.split("/");
+      const year = 2000 + Number(parts[0]);
+      const month = Number(parts[1]) - 1;
+      const day = Number(parts[2]);
+
+      const sheetDate = new Date(year, month, day);
+      sheetDate.setHours(0,0,0,0);
+
+      const dayOfWeek = today.getDay();
+      const daysToAdd = dayOfWeek === 5 ? 3 : 1;
+
+      const limitDate = new Date(today);
+      limitDate.setDate(today.getDate() + daysToAdd);
+
+      if (sheetDate > limitDate) return;
+
+      const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+      if (protections.length > 0) return;
+
+      const protection = sheet.protect();
+      protection.setWarningOnly(false);
+
+      protection.removeEditors(protection.getEditors());
+      protection.removeEditor(Session.getEffectiveUser());
+
+      protection.addEditors(admins);
+
+      if (protection.canDomainEdit()) {
+        protection.setDomainEdit(false);
+      }
+
+      const editableRangesForStaff = [
+        sheet.getRange("K:K"),
+        sheet.getRange("L:L"),
+        sheet.getRange("P:S")
+      ];
+
+      protection.setUnprotectedRanges(editableRangesForStaff);
+      protection.addEditors(staff);
+
+    });
+  } finally {
+    lock.releaseLock();
+  }
 }
