@@ -1,14 +1,14 @@
 // 🆕 追加：初回のみ実行してIDを保存、実行後は削除推奨
-function setConfig() {
-  PropertiesService.getScriptProperties().setProperties({
-    "DST_ID": "ここに実際のスプレッドシートID"
-  });
-  console.log("設定完了");
-}
+// function setConfig() {
+//   PropertiesService.getScriptProperties().setProperties({
+//     "DST_ID": "ここにファイルIDを入れる" //納品控帳ファイルID
+//   });
+//   console.log("設定完了");
+// }
 
 
 function onEditHandler(e) {
-
+  
   const SRC_SHEET_NAME = "入力用";
   const FLAG_HEADER = "転記済み";
   const SHIP_DATE_HEADER = "出荷日";
@@ -32,7 +32,7 @@ function onEditHandler(e) {
 
   const row = e.range.getRow();
   const col = e.range.getColumn();
-  if (row === 1) return;
+  if (row <= 2) return;
 
   const headers = sheet
     .getRange(1, 1, 1, sheet.getLastColumn())
@@ -123,8 +123,6 @@ function onEditHandler(e) {
       }
     }
 
-    let startRow = DST_START_ROW;
-
     const lastRow = dstSheet.getLastRow();
     const lastColumn = dstSheet.getLastColumn();
 
@@ -132,15 +130,27 @@ function onEditHandler(e) {
     const checkRows = Math.min(50, dataRows);
     const startCheckRow = checkRows > 0 ? lastRow - checkRows + 1 : DST_START_ROW;
 
+    const dstHeadersForExclude = dstSheet.getRange(DST_HEADER_ROW, 1, 1, lastColumn).getValues()[0];
+
+    const excludeHeaders = ["別請求", "出荷準備", "在庫管理出庫"];
+
+    const excludeIndexes = dstHeadersForExclude.reduce((acc, header, index) => {
+      if (excludeHeaders.includes(header)) acc.push(index);
+      return acc;
+    }, []);
+
+    let startRow = DST_START_ROW;
+
     const dataRange = checkRows > 0
-      ? dstSheet.getRange(startCheckRow, 2, checkRows, lastColumn - 1).getValues()
+      ? dstSheet.getRange(startCheckRow, 1, checkRows, lastColumn).getValues()
       : [];
 
     for (let i = dataRange.length - 1; i >= 0; i--) {
 
       const rowHasData = dataRange[i].some((cell, index) => {
-        if (index >= 13 && index <= 15) return false;
-        return cell !== "" && cell !== null;
+        if (index === 0) return false;
+        if (excludeIndexes.includes(index)) return false;
+        return cell !== "" && cell !== null && cell !== false;
       });
 
       if (rowHasData) {
@@ -148,6 +158,7 @@ function onEditHandler(e) {
         break;
       }
     }
+
 
     const dstHeaders = dstSheet
       .getRange(DST_HEADER_ROW, 1, 1, dstSheet.getLastColumn())
@@ -164,8 +175,11 @@ function onEditHandler(e) {
       .getRange(startRow, 1, 1, writeRow.length)
       .setValues([writeRow]);
 
-    if (!dstSheet.getRange("D1").getValue()) {
-      dstSheet.getRange("D1").setValue(
+    // ✅ 変更：formattedDate変数を削除してインライン化
+    const namedRanges = dstSheet.getNamedRanges();
+    const shipDateRange = namedRanges.find(nr => nr.getName().endsWith("出荷日セル"));
+    if (shipDateRange && !shipDateRange.getRange().getValue()) {
+      shipDateRange.getRange().setValue(
         Utilities.formatDate(shipDate, "Asia/Tokyo", "yy/MM/dd")
       );
     }
@@ -219,96 +233,101 @@ function sortSheetsByDate() {
 }
 
 
+
+
+
+
+
 // ================================
 //           自動ロック
 // ================================
-function protectPastSheets() {
+// function protectPastSheets() {
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+//   const lock = LockService.getScriptLock();
+//   lock.waitLock(30000);
 
-  try {
+//   try {
 
-    // ✅ 変更：直書き → PropertiesServiceから取得
-    const DST_ID = PropertiesService.getScriptProperties().getProperty("DST_ID");
-    if (!DST_ID) {
-      console.error("DST_IDが設定されていません。setConfig()を実行してください。");
-      return;
-    }
+//     // ✅ 変更：直書き → PropertiesServiceから取得
+//     const DST_ID = PropertiesService.getScriptProperties().getProperty("DST_ID");
+//     if (!DST_ID) {
+//       console.error("DST_IDが設定されていません。setConfig()を実行してください。");
+//       return;
+//     }
 
-    const ss = SpreadsheetApp.openById(DST_ID);
+//     const ss = SpreadsheetApp.openById(DST_ID);
 
-    const permissionSheet = ss.getSheetByName("権限管理");
-    const lastRow = permissionSheet.getLastRow();
-    if (lastRow < 2) return;
+//     const permissionSheet = ss.getSheetByName("権限管理");
+//     const lastRow = permissionSheet.getLastRow();
+//     if (lastRow < 2) return;
 
-    const permissionData = permissionSheet
-      .getRange(2, 1, lastRow - 1, 2)
-      .getValues();
+//     const permissionData = permissionSheet
+//       .getRange(2, 1, lastRow - 1, 2)
+//       .getValues();
 
-    const admins = [];
-    const staff = [];
+//     const admins = [];
+//     const staff = [];
 
-    permissionData.forEach(row => {
-      const email = row[0];
-      const role = row[1];
-      if (!email) return;
+//     permissionData.forEach(row => {
+//       const email = row[0];
+//       const role = row[1];
+//       if (!email) return;
 
-      if (role === "管理者") admins.push(email);
-      if (role === "担当者") staff.push(email);
-    });
+//       if (role === "管理者") admins.push(email);
+//       if (role === "担当者") staff.push(email);
+//     });
 
-    const sheets = ss.getSheets();
-    const today = new Date();
-    today.setHours(0,0,0,0);
+//     const sheets = ss.getSheets();
+//     const today = new Date();
+//     today.setHours(0,0,0,0);
 
-    sheets.forEach(sheet => {
+//     sheets.forEach(sheet => {
 
-      const name = sheet.getName();
-      if (!/^\d{2}\/\d{1,2}\/\d{1,2}$/.test(name)) return;
+//       const name = sheet.getName();
+//       if (!/^\d{2}\/\d{1,2}\/\d{1,2}$/.test(name)) return;
 
-      const parts = name.split("/");
-      const year = 2000 + Number(parts[0]);
-      const month = Number(parts[1]) - 1;
-      const day = Number(parts[2]);
+//       const parts = name.split("/");
+//       const year = 2000 + Number(parts[0]);
+//       const month = Number(parts[1]) - 1;
+//       const day = Number(parts[2]);
 
-      const sheetDate = new Date(year, month, day);
-      sheetDate.setHours(0,0,0,0);
+//       const sheetDate = new Date(year, month, day);
+//       sheetDate.setHours(0,0,0,0);
 
-      const dayOfWeek = today.getDay();
-      const daysToAdd = dayOfWeek === 5 ? 3 : 1;
+//       const dayOfWeek = today.getDay();
+//       const daysToAdd = dayOfWeek === 5 ? 3 : 1;
 
-      const limitDate = new Date(today);
-      limitDate.setDate(today.getDate() + daysToAdd);
+//       const limitDate = new Date(today);
+//       limitDate.setDate(today.getDate() + daysToAdd);
 
-      if (sheetDate > limitDate) return;
+//       if (sheetDate > limitDate) return;
 
-      const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
-      if (protections.length > 0) return;
+//       const protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
+//       if (protections.length > 0) return;
 
-      const protection = sheet.protect();
-      protection.setWarningOnly(false);
+//       const protection = sheet.protect();
+//       protection.setWarningOnly(false);
 
-      protection.removeEditors(protection.getEditors());
-      protection.removeEditor(Session.getEffectiveUser());
+//       protection.removeEditors(protection.getEditors());
+//       protection.removeEditor(Session.getEffectiveUser());
 
-      protection.addEditors(admins);
+//       protection.addEditors(admins);
 
-      if (protection.canDomainEdit()) {
-        protection.setDomainEdit(false);
-      }
+//       if (protection.canDomainEdit()) {
+//         protection.setDomainEdit(false);
+//       }
 
-      const editableRangesForStaff = [
-        sheet.getRange("K:K"),
-        sheet.getRange("L:L"),
-        sheet.getRange("P:S")
-      ];
+//       const editableRangesForStaff = [
+//         sheet.getRange("K:K"),
+//         sheet.getRange("L:L"),
+//         sheet.getRange("P:S")
+//       ];
 
-      protection.setUnprotectedRanges(editableRangesForStaff);
-      protection.addEditors(staff);
+//       protection.setUnprotectedRanges(editableRangesForStaff);
+//       protection.addEditors(staff);
 
-    });
-  } finally {
-    lock.releaseLock();
-  }
-}
+//     });
+//   } finally {
+//     lock.releaseLock();
+//   }
+// }
